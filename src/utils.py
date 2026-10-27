@@ -48,10 +48,10 @@ def build_config(config_file):
 
 def set_seeds(seed=42):
     torch.manual_seed(seed + 1)
-    torch.cuda.manual_seed(seed + 2)
-    torch.cuda.manual_seed_all(seed + 3)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed + 2)
+        torch.cuda.manual_seed_all(seed + 3)
     np.random.seed(seed + 4)
-    torch.cuda.manual_seed_all(seed + 5)
     random.seed(seed + 6)
     print(f'Seed was set to {seed}')
 
@@ -243,6 +243,9 @@ def image_preprint(img, scale=None):
         img = img.clamp(0,1)
     else:
         dm, ds = get_dataset_mean_dev_tensors(scale)
+        # DeNormalizer iterates over dim 0, so it needs [C,H,W] and not [1,C,H,W]
+        if img.dim() == 4 and img.shape[0] == 1:
+            img = img[0]
         dn = DeNormalizer(dm.cpu(), ds.cpu())
         img = dn(img)
         img = img.clamp(0,1)

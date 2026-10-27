@@ -4,6 +4,34 @@ For a demonstration of our attack follow the DIA_demo jupyter notebook.
 
 The paper including all empirical results can be found on [ojs.aaai.org](https://ojs.aaai.org/index.php/AAAI/article/view/26163) and [arXiv](https://arxiv.org/abs/2208.06163)
 
+## Scaling Limits of the Dropout Inversion Attack
+This fork extends the original implementation with the experiments of
+*Scaling Limits of the Dropout Inversion Attack: An Empirical Analysis Under Increasing Input Dimensionality*
+(Eduardo Gordiano Passos Silva and Rodrigo Cesar Pedrosa Silva, UFOP), presented at ENIAC.
+IG, DIA and WIIG are run against MLP, LeNet and ResNet models on CIFAR-10 images upscaled from 32x32 to 224x224.
+
+Additions to the original code:
++ `src/models/cnn.py`: LeNet and ResNet18/50 victims with a `MaskDropout` layer before the classification head
++ `freeze_batchnorm` attack option, which keeps BatchNorm layers in eval mode so that the victim gradient is reachable
++ per-sample PSNR, SSIM and MSE in image space (`src/metrics.py`) and per-run exports (`src/reporting.py`)
++ `run_grid.py` / `src/experiment.py`: the experiment grid, with resumable runs and parallel shards
++ `tools/generate_scaled_tdumps.py`: upscaled copies of the CIFAR-10 victim set
+
+`data/CIFAR10_128.tdump` holds the first 128 images of the CIFAR-10 training set, normalized with the CIFAR-10 mean and std.
+
+### Running the experiments
+```
+pip install -r requirements.txt
+python tools/generate_scaled_tdumps.py          # data/CIFAR10_128_{64x64,128x128,224x224}.tdump
+python run_grid.py --debug --runs 1             # smoke test: 150 iterations per attack
+python run_grid.py --shards 3                   # full grid: 3 datasets x 3 models x 3 dropout rates x 10 runs
+python run_grid.py --status                     # completed runs per combination
+```
+Every run is written to `outputs/<dataset>_<model>_p<dropout>_seed<seed>_run<i>/`, with one row per attack and
+victim image in `metrics.csv`, plus the raw tensors, loss curves and a comparison figure. Finished runs are skipped,
+so the same command resumes an interrupted grid. `python run_grid.py --help` lists all options, e.g.
+`--datasets CIFAR10_128_224x224 --models ResNet50 ViT --dropouts 0.5`.
+
 ## Example reconstructions for different attacks, dropout rates and datasets on a ViT [2]
 | | Original| IG [1]                                      | IG [1]                                     | DIA (Ours)                                       |
 |:-:|:------:|:---------------------------------------:|:---------------------------------------:|:-----------------------------------------:|
@@ -38,6 +66,7 @@ Gradient inversion attacks on federated learning systems reconstruct client trai
 + numpy
 + pytorch
 + einops
++ torchvision (LeNet/ResNet victims)
 
 You can also use [conda](https://www.anaconda.com/) to recreate our virtual environment:
 ```
