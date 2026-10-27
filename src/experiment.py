@@ -94,8 +94,8 @@ def run_grid(config, shard_index=0, shard_count=1):
     device = get_device()
     victim_data = {}
 
-    combinations_runs = product[tuple](grid, range(1, config.runs + 1))
-    for n, (combination, run) in enumerate[tuple[Combination, int]](combinations_runs, start=1):
+    combinations_runs = product(grid, range(1, config.runs + 1))
+    for n, (combination, run) in enumerate(combinations_runs, start=1):
         out_dir = run_dir(config, combination, run)
         if is_done(out_dir):
             print(f'[{n}/{total}] {out_dir.name}: already done, skipping', flush=True)
