@@ -1,7 +1,16 @@
 name: WellInformedInvertingGradients
+
+seed: 42 # dummy init is reseeded with seed + trial, so all attacks start from the same dummy
+collect_loss_history: true
+
 imitate_dropout: true
 train_mode: true
 attacker_train_mode: false
+
+# Keep BatchNorm layers in eval mode for both victim and attacker passes: otherwise the
+# victim normalizes by its own batch statistics and the target gradient is unreachable.
+freeze_batchnorm: true
+
 victim_batchsize: 1
 max_iterations: 20000
 max_trials: 1
@@ -23,7 +32,7 @@ scheduler:
   factor: 0.1
   patience: 800
 early_stopping:
-  patience: 4000
+  patience: 1500
   delta: 0
   metric: ReconstructionLoss
   use_loss: false

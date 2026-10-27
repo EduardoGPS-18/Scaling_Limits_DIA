@@ -2,4 +2,4 @@ name: MLP
 depth: 3
 hidden_size: 512
 bias: False
-p: 0.25
+dropout_rate: 0.25

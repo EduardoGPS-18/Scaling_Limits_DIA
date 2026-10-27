@@ -1,0 +1,2 @@
+name: ResNet50
+dropout_rate: 0.25
