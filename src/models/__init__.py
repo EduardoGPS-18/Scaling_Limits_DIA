@@ -1,3 +1,4 @@
+from src.models.cnn import build_LeNet, build_ResNet18, build_ResNet50
 from src.models.mlp import build_MLP
 from src.models.vit import build_VisionTransformer
 
@@ -6,6 +7,12 @@ def get_model(architecture, config, verbose=True):
         model = build_MLP(config)
     elif 'VisionTransformer' in architecture:
         model = build_VisionTransformer(config)
+    elif 'LeNet' in architecture:
+        model = build_LeNet(config)
+    elif 'ResNet18' in architecture:
+        model = build_ResNet18(config)
+    elif 'ResNet50' in architecture:
+        model = build_ResNet50(config)
     else:
         raise NotImplementedError(
             f'The model architecture {architecture} is not implemented yet..')

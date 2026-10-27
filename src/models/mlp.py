@@ -11,7 +11,7 @@ def build_MLP(config):
     biases = [config.bias for _ in range(config.depth+1)] if config.depth is not None and config.bias is not None else config.biases
     assert isinstance(widths, Iterable), f'widths {(widths)} must be an Iterable of integers!'
     assert isinstance(biases, Iterable), f'biases {(biases)} must be an Iterable of bools!'
-    model = MLP(config.data_shape, config.num_classes, widths, biases, config.p)
+    model = MLP(config.data_shape, config.num_classes, widths, biases, config.dropout_rate)
     return model
 
 class MLP(nn.Module):

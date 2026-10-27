@@ -1,4 +1,5 @@
 from collections import defaultdict, OrderedDict
+import time
 
 import torch
 import numpy as np
@@ -17,10 +18,8 @@ class IterativeGradientInversionAttack:
         self.dataset = dataset
         self.data_mean, self.data_std = utils.get_dataset_mean_dev_tensors(self.dataset)
         self.data_mean, self.data_std = self.data_mean.to(self.device), self.data_std.to(self.device)
-        if self.config.train_mode:
-            self.model.train()
-        else:
-            self.model.eval()
+        self.freeze_batchnorm = bool(self.config.freeze_batchnorm)
+        self.set_model_mode(self.config.train_mode)
         self.victim_inputs = victim_inputs
         self.victim_targets = victim_targets
         self.input_shape = victim_inputs[0].shape[1:]
@@ -33,6 +32,21 @@ class IterativeGradientInversionAttack:
         print(f'Max iterations:', self.max_iterations)
         self.init_method = self.config.init
         self.early_stopper = utils.EarlyStopping(self.config.early_stopping.patience, self.config.early_stopping.delta, self.config.early_stopping.metric, self.config.early_stopping.use_loss, self.config.early_stopping.subject_to, None, self.config.early_stopping.verbose) if self.config.early_stopping else None
+
+    def set_model_mode(self, train_mode):
+        """
+        Switch the attacked model between train and eval mode.
+
+        With ``freeze_batchnorm`` the normalization layers stay in eval mode regardless, so that
+        the victim gradient and the attacker's gradient are produced by the same function.
+        Dropout is left untouched: the victim pass must stay in train mode for the masks DIA
+        inverts to exist at all.
+        """
+        self.model.train() if train_mode else self.model.eval()
+        if self.freeze_batchnorm:
+            for module in self.model.modules():
+                if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                    module.eval()
 
     def init_dummies(self):
         dummy_shape = (self.victim_batchsize, *self.input_shape)
@@ -65,11 +79,8 @@ class IterativeGradientInversionAttack:
             batch_recon = {}
             input_batch = input_batch.to(self.device)
             target_batch = target_batch.to(self.device)
-            if self.config.train_mode:
-                self.model.train()
-            else:
-                self.model.eval()
-            
+            self.set_model_mode(self.config.train_mode)
+
             if self.config.imitate_dropout or self.config.name == 'DropoutInversionAttack':
                 self.model.track_dropout_mask(True) # track client masks to have a ground truth to compare to
                 self.model.use_dropout_mask(True) # use do_mask instead of always (THIS is being optimized for DIA!! or uses tracked masks for WIIG!)
@@ -87,7 +98,9 @@ class IterativeGradientInversionAttack:
             batch_results = self.rate_reconstruction_quality(input_batch, reconstructions, verbose=True)
             if best_metrics is not None: # None in case of e.g. analytical attacks 
                 for metric_name, best in best_metrics.items():
-                    batch_results[metric_name] = torch.Tensor([best for _ in range(input_batch.shape[0])]) if self.victim_batchsize > 1 else best
+                    if self.victim_batchsize > 1 and metric_name != 'LossHistory':
+                        best = torch.Tensor([best for _ in range(input_batch.shape[0])])
+                    batch_results[metric_name] = best
                 bl = best_metrics['ReconstructionLoss']
                 bi = best_metrics['BestIteration']
                 print(f'The reconstruction reached a best reconstruction loss of {bl:.7f} after {bi} iterations.')
@@ -135,16 +148,23 @@ class IterativeGradientInversionAttack:
         best_trial_metrics = defaultdict(list)
         recon_trials = []
         label_trials = []
-        
-        for trial in range(self.max_trials): 
+        loss_histories = []
+
+        for trial in range(self.max_trials):
             self.current_trial = trial
+            trial_start = time.perf_counter()
+            if self.config.seed is not None:
+                utils.set_seeds(self.config.seed + trial)
             dummy_data, dummy_label, optimizer = self.init_attack_specifics(vic_target) 
             scheduler = utils.set_scheduler(optimizer, 1, self.config.scheduler) if self.config.scheduler else None 
+            loss_history = []
 
             for i in range(self.max_iterations):
                 self.current_iteration = i
                 closure = self._gradient_closure(optimizer, dummy_data, dummy_label, gradient)
                 reconstruction_loss = optimizer.step(closure)
+                if self.config.collect_loss_history:
+                    loss_history.append(float(reconstruction_loss))
 
                 with torch.no_grad():
                     if self.config.clip_dummies:
@@ -185,7 +205,8 @@ class IterativeGradientInversionAttack:
                     print(f'Early Stopping since the reconstruction loss is extremely low.')
                     break
             
-            print(f'Reconstruction was stopped after {self.current_iteration+1} iterations for batch {self.current_batch} trial {self.current_trial}')
+            print(f'Reconstruction was stopped after {self.current_iteration+1} iterations for batch {self.current_batch} trial {self.current_trial} '
+                  f'({time.perf_counter() - trial_start:.1f} s)')
 
             recon_trials.append(best_reconstructed_data)
             label_trials.append(best_reconstructed_label)
@@ -193,6 +214,7 @@ class IterativeGradientInversionAttack:
             best_trial_metrics['ReconstructionLoss'].append(best_loss)
             best_trial_metrics['BestIteration'].append(best_iteration)
             best_trial_metrics['NeededIterations'].append(self.current_iteration)
+            loss_histories.append(loss_history)
 
             best_trial = np.argmin(best_trial_metrics['ReconstructionLoss'])
 
@@ -203,6 +225,8 @@ class IterativeGradientInversionAttack:
             print(f'Done with iterative reconstruction of this batch! Out of {self.max_trials} trials trial {best_trial+1} was the best!')
 
         best_metrics = {k: v[best_trial] for k, v in best_trial_metrics.items()}
+        if self.config.collect_loss_history:
+            best_metrics['LossHistory'] = loss_histories[best_trial]
 
         return recon_trials[best_trial], label_trials[best_trial], best_metrics
 
@@ -218,10 +242,7 @@ class IterativeGradientInversionAttack:
         """
         def closure(): 
             optimizer.zero_grad()
-            if self.config.attacker_train_mode:
-                self.model.train()
-            else:
-                self.model.eval()
+            self.set_model_mode(self.config.attacker_train_mode)
             # get the gradient of the loss function w.r.t. the input
             dummy_grad, prediction = self.get_gradient(dummy_data, label, create_graph=True)
             # compute the attack loss
